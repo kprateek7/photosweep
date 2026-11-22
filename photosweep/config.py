@@ -3,13 +3,32 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 APP_NAME = "PhotoSweep"
 
-# Store SQLite state & logs in LOCALAPPDATA (fast SSD, outside OneDrive sync!)
-APP_DATA_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
+
+def get_bundle_root() -> Path:
+    """Return the root directory containing static/ and models/ (works in source & PyInstaller bundles)."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent.parent
+
+
+def _resolve_app_data_dir() -> Path:
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+        return base / APP_NAME
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    xdg = os.environ.get("XDG_DATA_HOME")
+    return (Path(xdg) if xdg else Path.home() / ".local" / "share") / APP_NAME
+
+
+# Store SQLite state & logs outside OneDrive/iCloud sync folders on fast local storage
+APP_DATA_DIR = _resolve_app_data_dir()
 APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = APP_DATA_DIR / "photosweep.db"
 

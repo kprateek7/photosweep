@@ -842,3 +842,16 @@ input[type="number"] {
   display: flex;
   justify-content: flex-end;
 }
+
+.timing-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pill-delete-time {
+  background: rgba(16, 185, 129, 0.18);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+}

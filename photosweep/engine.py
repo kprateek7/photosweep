@@ -468,53 +468,57 @@ class JobEngine:
         include_other = bool(cfg.get("enable_other_duplicates", False))
         enable_media_dupes = bool(cfg.get("enable_duplicates", True))
 
-        # Phase 1: Scan folders & index metadata (ZERO cloud downloads!)
-        if not job["scan_completed"]:
-            self._phase_scan(job_id, sources, include_other_files=include_other)
-            self.db.update_job(job_id, scan_completed=1)
+        t0 = time.monotonic()
+        try:
+            # Phase 1: Scan folders & index metadata (ZERO cloud downloads!)
+            if not job["scan_completed"]:
+                self._phase_scan(job_id, sources, include_other_files=include_other)
+                self.db.update_job(job_id, scan_completed=1)
 
-        # Phase 2: Exact Duplicates (Photos, Videos, and optionally Other Files)
-        job = self.db.get_job(job_id)
-        assert job is not None
-        if (enable_media_dupes or include_other) and not job["dedup_completed"]:
-            self._phase_exact_duplicates(
-                job_id,
-                sources,
-                onedrive_mode,
-                min_ssd_free_gb,
-                enable_media_dupes=enable_media_dupes,
-                enable_other_dupes=include_other,
-            )
-            self.db.update_job(job_id, dedup_completed=1)
-        elif not (enable_media_dupes or include_other):
-            self.db.update_job(job_id, dedup_completed=1)
+            # Phase 2: Exact Duplicates (Photos, Videos, and optionally Other Files)
+            job = self.db.get_job(job_id)
+            assert job is not None
+            if (enable_media_dupes or include_other) and not job["dedup_completed"]:
+                self._phase_exact_duplicates(
+                    job_id,
+                    sources,
+                    onedrive_mode,
+                    min_ssd_free_gb,
+                    enable_media_dupes=enable_media_dupes,
+                    enable_other_dupes=include_other,
+                )
+                self.db.update_job(job_id, dedup_completed=1)
+            elif not (enable_media_dupes or include_other):
+                self.db.update_job(job_id, dedup_completed=1)
 
-        # Phase 3: Single-pass Photo Analysis (EXIF + dHash/pHash + Face/Eye/Smile/Blur)
-        job = self.db.get_job(job_id)
-        assert job is not None
-        if (cfg.get("enable_blur", True) or cfg.get("enable_similar", True)) and not job[
-            "analysis_completed"
-        ]:
-            self._phase_analyze_photos(
-                job_id=job_id,
-                sources=sources,
-                preset=preset,
-                enable_blur=bool(cfg.get("enable_blur", True)),
-                onedrive_mode=onedrive_mode,
-                min_ssd_free_gb=min_ssd_free_gb,
-            )
-            self.db.update_job(job_id, analysis_completed=1)
-        else:
-            self.db.update_job(job_id, analysis_completed=1)
+            # Phase 3: Single-pass Photo Analysis (EXIF + dHash/pHash + Face/Eye/Smile/Blur)
+            job = self.db.get_job(job_id)
+            assert job is not None
+            if (cfg.get("enable_blur", True) or cfg.get("enable_similar", True)) and not job[
+                "analysis_completed"
+            ]:
+                self._phase_analyze_photos(
+                    job_id=job_id,
+                    sources=sources,
+                    preset=preset,
+                    enable_blur=bool(cfg.get("enable_blur", True)),
+                    onedrive_mode=onedrive_mode,
+                    min_ssd_free_gb=min_ssd_free_gb,
+                )
+                self.db.update_job(job_id, analysis_completed=1)
+            else:
+                self.db.update_job(job_id, analysis_completed=1)
 
-        # Phase 4: Burst / Similar Clustering (Pure SQLite + RAM — takes seconds!)
-        job = self.db.get_job(job_id)
-        assert job is not None
-        if cfg.get("enable_similar", True) and not job["cluster_completed"]:
-            self._phase_cluster_similar(job_id, preset)
-            self.db.update_job(job_id, cluster_completed=1)
-        else:
-            self.db.update_job(job_id, cluster_completed=1)
+            # Phase 4: Burst / Similar Clustering (Pure SQLite + RAM — takes seconds!)
+            job = self.db.get_job(job_id)
+            assert job is not None
+            if cfg.get("enable_similar", True) and not job["cluster_completed"]:
+                self._phase_cluster_similar(job_id, preset)
+                self.db.update_job(job_id, cluster_completed=1)
+            else:
+                self.db.update_job(job_id, cluster_completed=1)
+        finally:
+            self.db.add_job_duration(job_id, "analysis_duration_sec", time.monotonic() - t0)
 
         summary = self.db.compute_summary(job_id)
         self.db.update_job(
@@ -1013,14 +1017,21 @@ class JobEngine:
         batch_id = f"act_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:5]}"
         retry_failed = bool(options.get("retry_failed", False))
 
-        if mode == "quarantine":
-            self._exec_quarantine(job, batch_id, categories, retry_failed=retry_failed)
-        elif mode == "delete":
-            self._exec_delete(job, batch_id, categories, retry_failed=retry_failed)
-        elif mode == "copy_kept":
-            self._exec_copy_kept(job, batch_id, options)
-        elif mode == "undo_quarantine":
-            self._exec_undo_quarantine(job)
+        t0 = time.monotonic()
+        try:
+            if mode == "quarantine":
+                self._exec_quarantine(job, batch_id, categories, retry_failed=retry_failed)
+            elif mode == "delete":
+                self._exec_delete(job, batch_id, categories, retry_failed=retry_failed)
+            elif mode == "copy_kept":
+                self._exec_copy_kept(job, batch_id, options)
+            elif mode == "undo_quarantine":
+                self._exec_undo_quarantine(job)
+        finally:
+            elapsed = time.monotonic() - t0
+            self.db.update_job(job_id, last_action_duration_sec=elapsed)
+            if mode == "delete":
+                self.db.add_job_duration(job_id, "delete_duration_sec", elapsed)
 
         summary = self.db.compute_summary(job_id)
         self.db.update_job(

@@ -35,6 +35,19 @@ function formatEta(seconds) {
   return `${hrs}h ${mins % 60}m`;
 }
 
+function formatDuration(seconds) {
+  if (seconds == null || !isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < 1) return `${seconds.toFixed(1)}s`;
+  const total = Math.round(seconds);
+  if (total < 60) return `${total}s`;
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  if (mins < 60) return `${mins}m ${secs}s`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `${hrs}h ${remMins}m ${secs}s`;
+}
+
 function showToast(msg, duration = 3500) {
   const el = $("toast");
   el.textContent = msg;
@@ -59,7 +72,8 @@ async function api(url, options = {}) {
 
 async function loadSystem() {
   const info = await api("/api/system");
-  $("cDriveBadge").textContent = `C: Free ${info.c_drive_free_gb} GB`;
+  const driveLabel = info.sys_drive_label || "C:";
+  $("cDriveBadge").textContent = `${driveLabel} Free ${info.c_drive_free_gb} GB`;
 
   const chips = $("quickChips");
   chips.innerHTML = "";
@@ -240,7 +254,8 @@ async function pollJob() {
     const data = await api(`/api/jobs/${state.currentJobId}`);
     const job = data.job;
     const rt = data.runtime || {};
-    $("cDriveBadge").textContent = `C: Free ${data.c_drive_free_gb} GB`;
+    const driveLabel = data.sys_drive_label || "C:";
+    $("cDriveBadge").textContent = `${driveLabel} Free ${data.c_drive_free_gb} GB`;
 
     // Drive Disconnect Banner
     const banner = $("disconnectBanner");
@@ -412,6 +427,19 @@ function renderReport(job) {
 
   $("undoBar").classList.toggle("hidden", !s.can_undo_quarantine);
 
+  // Render actual scan & delete elapsed durations
+  const scanSec = Number(job.analysis_duration_sec || 0);
+  const delSec = Number(job.delete_duration_sec || 0);
+  const hasDeleted = (act.deleted || 0) > 0 || delSec > 0;
+  $("timingRow").classList.toggle("hidden", scanSec <= 0 && !hasDeleted);
+  if (scanSec > 0) {
+    $("scanTimeBadge").textContent = `⏱ Scan Time: ${formatDuration(scanSec)}`;
+  }
+  $("deleteTimeBadge").classList.toggle("hidden", !hasDeleted);
+  if (hasDeleted) {
+    $("deleteTimeBadge").textContent = `🗑 Delete Time: ${formatDuration(delSec)}`;
+  }
+
   // Render analyzed folder paths above Option A / B
   renderAnalyzedFolders((job.config && job.config.sources) || []);
 
@@ -422,7 +450,8 @@ function renderReport(job) {
   $("allDeletedBanner").classList.toggle("hidden", !allDeleted);
   if (allDeleted) {
     $("allDeletedMessage").textContent =
-      `All ${deletedCnt.toLocaleString()} flagged files have been permanently deleted (${formatBytes(deletedBytes)} freed).`;
+      `All ${deletedCnt.toLocaleString()} flagged files have been permanently deleted (${formatBytes(deletedBytes)} freed). ` +
+      `Scan took ${formatDuration(scanSec)} • Deletion took ${formatDuration(delSec)}.`;
   }
   setBoxDisabled("optionABox", allDeleted);
   setBoxDisabled("optionBBox", allDeleted);

@@ -14,18 +14,18 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from pydantic import BaseModel
 
-from .config import APP_DATA_DIR, PRESETS
+from .config import APP_DATA_DIR, PRESETS, get_bundle_root
 from .db import Database
 from .engine import DriveDisconnectedError, JobEngine
 from .win_utils import (
     get_available_drives,
-    get_drive_free_gb,
     get_quick_shortcuts,
+    get_system_drive_info,
     is_onedrive_path,
     is_path_accessible,
 )
 
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+STATIC_DIR = get_bundle_root() / "static"
 
 
 class StartAnalysisRequest(BaseModel):
@@ -64,6 +64,7 @@ def create_app(db_path: Path | str | None = None) -> FastAPI:
 
     @app.get("/api/system")
     def get_system_info() -> dict[str, Any]:
+        sys_label, sys_free_gb = get_system_drive_info()
         return {
             "drives": get_available_drives(),
             "shortcuts": get_quick_shortcuts(),
@@ -76,7 +77,8 @@ def create_app(db_path: Path | str | None = None) -> FastAPI:
                 for k, v in PRESETS.items()
             },
             "app_data_dir": str(APP_DATA_DIR),
-            "c_drive_free_gb": round(get_drive_free_gb("C:\\"), 1),
+            "sys_drive_label": sys_label,
+            "c_drive_free_gb": sys_free_gb,
         }
 
     @app.get("/api/browse")
@@ -165,12 +167,14 @@ def create_app(db_path: Path | str | None = None) -> FastAPI:
         if job["status"] == "drive_disconnected" and job.get("disconnected_path"):
             reconnected = is_path_accessible(job["disconnected_path"])
 
+        sys_label, sys_free_gb = get_system_drive_info()
         return {
             "job": job,
             "is_active": is_active,
             "runtime": runtime,
             "drive_reconnected": reconnected,
-            "c_drive_free_gb": round(get_drive_free_gb("C:\\"), 1),
+            "sys_drive_label": sys_label,
+            "c_drive_free_gb": sys_free_gb,
         }
 
     @app.post("/api/jobs/{job_id}/pause")

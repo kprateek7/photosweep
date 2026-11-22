@@ -30,9 +30,18 @@ Local, resumable desktop web app for cleaning large photo & video libraries (50,
    - **Strictly preserves 100% of EXIF metadata** and exact Windows **Created & Modified timestamps**.
    - Separate local vs. cloud byte-based (`MB/s`) ETA tracking, **Retry Failed Files / Deletions**, downloadable failed-files `.csv` report, SQLite checkpointing in `%LOCALAPPDATA%\PhotoSweep`, and **Drive Disconnect Detection** with automatic **Reconnect & Resume**.
 
-## Quick Start (Windows)
+## Download Pre-Built App (Windows & macOS — No Python Needed)
 
-Double-click **`run.bat`** — it sets up the isolated virtual environment in `%LOCALAPPDATA%\PhotoSweep\venv` (outside OneDrive) and opens `http://127.0.0.1:8765` in your browser.
+Go to the **[Releases](https://github.com/kprateek7/photosweep/releases)** page:
+
+* **Windows:** Download `PhotoSweep-Windows-x64.zip`, extract it, and double-click `PhotoSweep.exe`. *(First run: if Windows SmartScreen appears, click **More info → Run anyway**.)*
+* **macOS (Apple Silicon):** Download `PhotoSweep-macOS-AppleSilicon.dmg`, drag `PhotoSweep.app` to **Applications**, then **Right-click → Open** the first time. *(If Gatekeeper blocks it, run `xattr -cr /Applications/PhotoSweep.app` in Terminal once.)*
+
+---
+
+## Run From Source (Developers)
+
+Double-click **`run.bat`** on Windows — it sets up the isolated virtual environment in `%LOCALAPPDATA%\PhotoSweep\venv` (outside OneDrive) and opens `http://127.0.0.1:8765` in your browser.
 
 Or run manually:
 ```powershell

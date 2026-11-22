@@ -21,7 +21,7 @@ try:
 except Exception:
     pass
 
-from .config import PresetConfig
+from .config import PresetConfig, get_bundle_root
 
 # Register HEIC/HEIF support if available
 try:
@@ -53,7 +53,7 @@ _COPY_SUFFIX_RE = re.compile(
 _tls = threading.local()
 
 YUNET_MODEL_PATH = (
-    Path(__file__).resolve().parent.parent / "models" / "face_detection_yunet_2023mar.onnx"
+    get_bundle_root() / "models" / "face_detection_yunet_2023mar.onnx"
 )
 
 

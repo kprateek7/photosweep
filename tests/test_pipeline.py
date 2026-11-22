@@ -264,6 +264,10 @@ class PhotoSweepPipelineTests(unittest.TestCase):
         self._wait_idle(engine)
 
         s2 = db.compute_summary(job["id"])
+        final_job = db.get_job(job["id"])
+        assert final_job is not None
+        self.assertGreater(final_job["analysis_duration_sec"], 0.0)
+        self.assertGreater(final_job["delete_duration_sec"], 0.0)
         self.assertFalse(dup.exists())
         self.assertFalse(s2["has_failures"])
         self.assertTrue(s2["all_flagged_deleted"])

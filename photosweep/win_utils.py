@@ -1,4 +1,4 @@
-"""Windows-specific utilities: OneDrive Files On-Demand, exact timestamp preservation, drive checks, keep-awake."""
+"""OS utilities (Windows & macOS): OneDrive/iCloud detection, exact timestamps, drive discovery, keep-awake."""
 
 from __future__ import annotations
 
@@ -7,12 +7,24 @@ import os
 import shutil
 import string
 import subprocess
+import sys
 import time
-from ctypes import wintypes
 from pathlib import Path
 from typing import Any
 
 IS_WINDOWS = os.name == "nt"
+IS_MACOS = sys.platform == "darwin"
+
+if IS_WINDOWS:
+    from ctypes import wintypes
+
+    class FILETIME(ctypes.Structure):
+        _fields_ = [
+            ("dwLowDateTime", wintypes.DWORD),
+            ("dwHighDateTime", wintypes.DWORD),
+        ]
+
+_caffeinate_proc: subprocess.Popen[Any] | None = None
 
 # Win32 file attributes for OneDrive Files On-Demand
 FILE_ATTRIBUTE_OFFLINE = 0x00001000
@@ -54,15 +66,8 @@ DRIVE_TYPES = {
 }
 
 
-class FILETIME(ctypes.Structure):
-    _fields_ = [
-        ("dwLowDateTime", wintypes.DWORD),
-        ("dwHighDateTime", wintypes.DWORD),
-    ]
-
-
 def get_onedrive_roots() -> list[str]:
-    """Return normalized local paths to any configured OneDrive folders."""
+    """Return normalized local paths to any configured OneDrive folders (Windows & macOS)."""
     roots: list[str] = []
     for var in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
         val = os.environ.get(var)
@@ -70,6 +75,14 @@ def get_onedrive_roots() -> list[str]:
             norm = os.path.normcase(os.path.abspath(val))
             if norm not in roots:
                 roots.append(norm)
+    if IS_MACOS:
+        cloud_storage = Path.home() / "Library" / "CloudStorage"
+        if cloud_storage.is_dir():
+            for child in cloud_storage.iterdir():
+                if child.is_dir() and child.name.lower().startswith("onedrive"):
+                    norm = os.path.normcase(os.path.abspath(str(child)))
+                    if norm not in roots:
+                        roots.append(norm)
     return roots
 
 
@@ -118,12 +131,25 @@ def dehydrate_onedrive_file(path: str | Path) -> bool:
 
 
 def get_drive_root(path: str | Path) -> str:
-    """Return drive root (e.g. 'C:\\') for a path on Windows, or '/' elsewhere."""
+    """Return drive/volume root ('C:\\' on Windows, '/Volumes/<Name>' on macOS external drives, or '/')."""
     p = os.path.abspath(str(path))
-    drive, _ = os.path.splitdrive(p)
-    if drive:
-        return drive + os.sep
+    if IS_WINDOWS:
+        drive, _ = os.path.splitdrive(p)
+        return (drive + os.sep) if drive else os.sep
+    if IS_MACOS and p.startswith("/Volumes/"):
+        parts = Path(p).parts
+        if len(parts) >= 3:
+            return os.path.join(parts[0], parts[1], parts[2])
     return os.sep
+
+
+def get_system_drive_info() -> tuple[str, float]:
+    """Return (label, free_gb) for the primary OS drive (C: on Windows, Macintosh HD on macOS)."""
+    if IS_WINDOWS:
+        return "C:", round(get_drive_free_gb("C:\\"), 1)
+    if IS_MACOS:
+        return "Mac SSD", round(get_drive_free_gb("/"), 1)
+    return "Disk /", round(get_drive_free_gb("/"), 1)
 
 
 def get_drive_free_gb(path: str | Path) -> float:
@@ -174,6 +200,40 @@ def get_available_drives() -> list[dict[str, Any]]:
                     )
                 except OSError:
                     continue
+    elif IS_MACOS:
+        try:
+            usage = shutil.disk_usage("/")
+            drives.append(
+                {
+                    "path": "/",
+                    "label": "Macintosh HD (/)",
+                    "type": "Local Disk",
+                    "total_gb": round(usage.total / (1024**3), 1),
+                    "free_gb": round(usage.free / (1024**3), 1),
+                    "is_onedrive": False,
+                }
+            )
+        except OSError:
+            pass
+        volumes = Path("/Volumes")
+        if volumes.is_dir():
+            for vol in sorted(volumes.iterdir(), key=lambda x: x.name.lower()):
+                try:
+                    if not vol.is_dir() or vol.is_symlink():
+                        continue
+                    usage = shutil.disk_usage(str(vol))
+                    drives.append(
+                        {
+                            "path": str(vol),
+                            "label": vol.name,
+                            "type": "External Volume",
+                            "total_gb": round(usage.total / (1024**3), 1),
+                            "free_gb": round(usage.free / (1024**3), 1),
+                            "is_onedrive": False,
+                        }
+                    )
+                except OSError:
+                    continue
     else:
         usage = shutil.disk_usage("/")
         drives.append(
@@ -191,7 +251,7 @@ def get_available_drives() -> list[dict[str, Any]]:
 
 
 def get_quick_shortcuts() -> list[dict[str, Any]]:
-    """Return quick-access shortcuts like OneDrive, Pictures, Desktop."""
+    """Return quick-access shortcuts like OneDrive, iCloud Drive, Pictures, Desktop."""
     shortcuts: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -210,29 +270,48 @@ def get_quick_shortcuts() -> list[dict[str, Any]]:
             }
         )
 
-    for var in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
-        val = os.environ.get(var)
-        if val:
-            add("OneDrive", val, True)
-            pics = os.path.join(val, "Pictures")
-            if os.path.isdir(pics):
-                add("OneDrive Pictures", pics, True)
+    for od_root in get_onedrive_roots():
+        label = Path(od_root).name if IS_MACOS else "OneDrive"
+        add(label, od_root, True)
+        pics = os.path.join(od_root, "Pictures")
+        if os.path.isdir(pics):
+            add(f"{label} Pictures", pics, True)
 
     home = Path.home()
+    if IS_MACOS:
+        icloud = home / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+        if icloud.is_dir():
+            add("iCloud Drive", str(icloud), True)
+
     add("Pictures", str(home / "Pictures"))
     add("Desktop", str(home / "Desktop"))
     return shortcuts
 
 
 def prevent_sleep(enable: bool) -> None:
-    """Prevent or re-allow Windows sleep during long-running jobs."""
-    if not IS_WINDOWS:
-        return
-    try:
-        flags = (ES_CONTINUOUS | ES_SYSTEM_REQUIRED) if enable else ES_CONTINUOUS
-        ctypes.windll.kernel32.SetThreadExecutionState(flags)
-    except Exception:
-        pass
+    """Prevent or re-allow system sleep during long-running jobs (Windows & macOS)."""
+    global _caffeinate_proc
+    if IS_WINDOWS:
+        try:
+            flags = (ES_CONTINUOUS | ES_SYSTEM_REQUIRED) if enable else ES_CONTINUOUS
+            ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        except Exception:
+            pass
+    elif IS_MACOS:
+        try:
+            if enable:
+                if _caffeinate_proc is None or _caffeinate_proc.poll() is not None:
+                    _caffeinate_proc = subprocess.Popen(
+                        ["caffeinate", "-i", "-s"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+            else:
+                if _caffeinate_proc is not None and _caffeinate_proc.poll() is None:
+                    _caffeinate_proc.terminate()
+                _caffeinate_proc = None
+        except Exception:
+            pass
 
 
 def copy_windows_file_times(src: str | Path, dst: str | Path) -> None:

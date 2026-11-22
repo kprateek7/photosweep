@@ -31,7 +31,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     disconnected_path TEXT DEFAULT '',
     status_message TEXT DEFAULT '',
     error_message TEXT DEFAULT '',
-    summary_json TEXT DEFAULT '{}'
+    summary_json TEXT DEFAULT '{}',
+    analysis_duration_sec REAL NOT NULL DEFAULT 0.0,
+    delete_duration_sec REAL NOT NULL DEFAULT 0.0,
+    last_action_duration_sec REAL NOT NULL DEFAULT 0.0
 );
 
 CREATE TABLE IF NOT EXISTS files (
@@ -128,13 +131,30 @@ class Database:
             conn = self._connect()
             try:
                 conn.executescript(SCHEMA_SQL)
-                # Safe migration for existing databases created before action_error was added
-                cols = {
+                # Safe migrations for existing databases
+                file_cols = {
                     row["name"]
                     for row in conn.execute("PRAGMA table_info(files)").fetchall()
                 }
-                if "action_error" not in cols:
+                if "action_error" not in file_cols:
                     conn.execute("ALTER TABLE files ADD COLUMN action_error TEXT DEFAULT ''")
+
+                job_cols = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+                }
+                if "analysis_duration_sec" not in job_cols:
+                    conn.execute(
+                        "ALTER TABLE jobs ADD COLUMN analysis_duration_sec REAL NOT NULL DEFAULT 0.0"
+                    )
+                if "delete_duration_sec" not in job_cols:
+                    conn.execute(
+                        "ALTER TABLE jobs ADD COLUMN delete_duration_sec REAL NOT NULL DEFAULT 0.0"
+                    )
+                if "last_action_duration_sec" not in job_cols:
+                    conn.execute(
+                        "ALTER TABLE jobs ADD COLUMN last_action_duration_sec REAL NOT NULL DEFAULT 0.0"
+                    )
                 conn.commit()
             finally:
                 conn.close()
@@ -192,6 +212,17 @@ class Database:
         vals.append(job_id)
         with self.session() as conn:
             conn.execute(f"UPDATE jobs SET {', '.join(cols)} WHERE id = ?", vals)
+
+    def add_job_duration(self, job_id: str, field: str, delta_sec: float) -> None:
+        """Accumulate active elapsed duration (in seconds) on a job timer column."""
+        if field not in ("analysis_duration_sec", "delete_duration_sec"):
+            raise ValueError(f"Invalid duration field: {field}")
+        delta = max(0.0, float(delta_sec))
+        with self.session() as conn:
+            conn.execute(
+                f"UPDATE jobs SET {field} = COALESCE({field}, 0.0) + ?, updated_at = ? WHERE id = ?",
+                (delta, time.time(), job_id),
+            )
 
     def _row_to_job(self, row: sqlite3.Row) -> dict[str, Any]:
         d = dict(row)
