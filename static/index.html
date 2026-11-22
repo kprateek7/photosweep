@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PhotoSweep — Automated Photo & Video Cleaner</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon">PS</div>
+      <div>
+        <h1>PhotoSweep</h1>
+        <p class="subtitle">Local, resumable duplicate, blur &amp; burst cleaner — 100% offline on your PC</p>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <span id="cDriveBadge" class="pill pill-neutral">C: Free —</span>
+      <select id="jobHistorySelect" class="select-compact" title="Load a previous or paused session">
+        <option value="">New Session</option>
+      </select>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Drive Disconnect / Alert Banner -->
+    <section id="disconnectBanner" class="banner banner-danger hidden">
+      <div class="banner-body">
+        <strong id="disconnectTitle">Drive Disconnected!</strong>
+        <p id="disconnectMessage">A drive became unavailable. Progress is safely saved.</p>
+      </div>
+      <div class="banner-actions">
+        <button id="btnCheckReconnect" class="btn btn-primary">Reconnect &amp; Resume</button>
+      </div>
+    </section>
+
+    <!-- STEP 1: Setup & Folder Picker -->
+    <section id="setupPanel" class="card">
+      <div class="card-header">
+        <h2>1. Select Drives &amp; Folders</h2>
+        <span class="hint">Top folder = highest priority (keeps originals when duplicates span drives)</span>
+      </div>
+
+      <div class="quick-bar">
+        <span class="quick-label">Quick add:</span>
+        <div id="quickChips" class="chip-row"></div>
+        <button id="btnBrowseSource" class="btn btn-secondary">+ Browse Folders / Drives</button>
+      </div>
+
+      <div id="selectedSourcesList" class="source-list">
+        <div class="empty-state">No folders selected yet. Click a drive/shortcut above or click <strong>+ Browse Folders / Drives</strong>.</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="settings-grid">
+        <div class="setting-box">
+          <h3>Cleanup Rules</h3>
+          <label class="check-row">
+            <input type="checkbox" id="chkDupes" checked />
+            <span><strong>Exact Duplicates</strong> (Photos &amp; Videos — size + name + partial/full hash)</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" id="chkOtherDupes" />
+            <span><strong>Duplicate Other Files</strong> (PDFs, docs, archives, etc. — same byte size, extension &amp; similar name)</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" id="chkBlur" checked />
+            <span><strong>Blurry Portraits Only</strong> (well-lit human faces; skips dark, motion &amp; non-human shots)</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" id="chkSimilar" checked />
+            <span><strong>Similar Bursts</strong> (keeps #1 best shot: sharpest face, open eyes &amp; smile)</span>
+          </label>
+        </div>
+
+        <div class="setting-box">
+          <h3>Sensitivity &amp; OneDrive Safety</h3>
+          <div class="field-row">
+            <label for="presetSelect">Sensitivity Preset</label>
+            <select id="presetSelect">
+              <option value="safe">Safe (Conservative)</option>
+              <option value="balanced" selected>Balanced (Recommended)</option>
+              <option value="aggressive">Aggressive (Max Space Saved)</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="onedriveModeSelect">OneDrive Cloud-Only Files</label>
+            <select id="onedriveModeSelect">
+              <option value="smart_dehydrate" selected>Smart Cloud Mode (Analyze &amp; immediately free SSD space)</option>
+              <option value="skip_cloud">Skip cloud-only files (local files only)</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="minSsdInput">SSD Free-Space Safety Floor (GB)</label>
+            <input type="number" id="minSsdInput" value="15" min="5" max="100" step="1" />
+          </div>
+        </div>
+      </div>
+
+      <div class="primary-cta-bar">
+        <button id="btnStartAnalysis" class="btn btn-primary btn-lg">
+          Analyze Without Deletion
+        </button>
+        <span class="cta-note">Scans and builds a full report first. Zero files are modified or deleted during analysis.</span>
+      </div>
+    </section>
+
+    <!-- STEP 2: Live Progress -->
+    <section id="progressPanel" class="card hidden">
+      <div class="card-header">
+        <div>
+          <span id="phaseBadge" class="pill pill-info">Scanning</span>
+          <h2 id="progressTitle" style="display:inline; margin-left:8px;">Working...</h2>
+        </div>
+        <div class="control-buttons">
+          <button id="btnPause" class="btn btn-secondary">Pause</button>
+          <button id="btnResume" class="btn btn-primary hidden">Resume</button>
+          <button id="btnCancel" class="btn btn-danger-outline">Cancel</button>
+        </div>
+      </div>
+
+      <p id="statusMessage" class="status-text">Initializing...</p>
+
+      <div class="progress-track">
+        <div id="progressBar" class="progress-fill" style="width: 0%"></div>
+      </div>
+
+      <div class="metrics-row">
+        <div class="metric">
+          <span class="metric-label">Processed</span>
+          <strong id="metricProcessed">0 / 0</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Speed</span>
+          <strong id="metricSpeed">—</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Est. Time Remaining</span>
+          <strong id="metricEta">—</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Remaining Queue</span>
+          <strong id="metricQueue">—</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Status</span>
+          <strong id="metricStatus">Running</strong>
+        </div>
+      </div>
+
+      <div class="current-file-box">
+        <span class="muted">Current file:</span>
+        <code id="currentFileText">—</code>
+      </div>
+    </section>
+
+    <!-- STEP 3: Analysis Report & Actions -->
+    <section id="reportPanel" class="card hidden">
+      <div class="card-header">
+        <div>
+          <h2>Analysis Report</h2>
+          <p id="reportSubtitle" class="hint">No files have been deleted yet. Review the savings below and choose an action.</p>
+        </div>
+      </div>
+
+      <!-- Post-Deletion Completion Banner -->
+      <div id="allDeletedBanner" class="banner banner-reconnected hidden" style="margin-bottom: 16px;">
+        <div class="banner-body">
+          <strong>Cleanup Complete — Flagged Files Deleted</strong>
+          <p id="allDeletedMessage"></p>
+        </div>
+        <div class="banner-actions">
+          <button id="btnNewAnalysisBanner" class="btn btn-success btn-lg">Start New Scan</button>
+        </div>
+      </div>
+
+      <!-- Partial / Failed Deletion or Download Banner -->
+      <div id="failedBanner" class="banner banner-warning hidden" style="margin-bottom: 16px;">
+        <div class="banner-body">
+          <strong id="failedBannerTitle">Some Files Could Not Be Processed</strong>
+          <p id="failedBannerMessage"></p>
+        </div>
+        <div class="banner-actions" style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button id="btnRetryFailedAnalysis" class="btn btn-primary hidden">Retry Failed Downloads / Analysis</button>
+          <button id="btnRetryFailedDelete" class="btn btn-danger hidden">Retry Failed Deletions</button>
+          <button id="btnDownloadFailedCsv" class="btn btn-secondary">Download Failed List (.csv)</button>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card stat-highlight">
+          <span class="stat-label">Potential Space Saved</span>
+          <strong id="statSavedBytes" class="stat-value">0 GB</strong>
+          <span id="statFlaggedCount" class="stat-sub">0 files flagged</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Exact Duplicates</span>
+          <strong id="statDupesCount" class="stat-value">0</strong>
+          <span id="statDupesBytes" class="stat-sub">0 GB (photos &amp; videos)</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Blurry Portraits</span>
+          <strong id="statBlurryCount" class="stat-value">0</strong>
+          <span id="statBlurryBytes" class="stat-sub">0 GB (well-lit human faces)</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Similar Burst Shots</span>
+          <strong id="statSimilarCount" class="stat-value">0</strong>
+          <span id="statSimilarBytes" class="stat-sub">0 GB (kept #1 best shot)</span>
+        </div>
+        <div class="stat-card stat-keep">
+          <span class="stat-label">Clean Kept Library</span>
+          <strong id="statKeptCount" class="stat-value">0</strong>
+          <span id="statKeptBytes" class="stat-sub">0 GB kept</span>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Analyzed Folders List (just above Option A / B) -->
+      <div id="analyzedFoldersBox" class="analyzed-folders-box"></div>
+
+      <!-- Action 1 & 2: Cleanup Flagged Files -->
+      <div class="action-grid">
+        <div id="optionABox" class="action-box">
+          <h3>Option A: Clean Up Flagged Files</h3>
+          <p class="hint">Choose which categories to remove:</p>
+          <div class="inline-checks">
+            <label><input type="checkbox" id="actDupes" checked /> Exact Duplicates</label>
+            <label><input type="checkbox" id="actBlurry" checked /> Blurry Portraits</label>
+            <label><input type="checkbox" id="actSimilar" checked /> Similar Shots</label>
+          </div>
+          <div class="btn-group">
+            <button id="btnQuarantine" class="btn btn-primary">
+              Move to Quarantine (Instant &amp; Reversible)
+            </button>
+            <button id="btnDeletePermanent" class="btn btn-danger">
+              Delete Permanently
+            </button>
+          </div>
+          <div id="undoBar" class="undo-bar hidden">
+            <span>Files were moved to <code>_PhotoSweep_Quarantine</code> on their original drives.</span>
+            <button id="btnUndoQuarantine" class="btn btn-secondary btn-sm">Undo Quarantine Move</button>
+          </div>
+        </div>
+
+        <!-- Action 3: Copy Kept Files to New Location -->
+        <div id="optionBBox" class="action-box">
+          <h3>Option B: Copy Clean Kept Files to New Drive / OneDrive</h3>
+          <p class="hint">Original EXIF metadata &amp; Windows Created/Modified timestamps are strictly preserved. OneDrive destinations auto-throttle to protect your SSD.</p>
+          <div class="dest-picker-row">
+            <input type="text" id="copyDestInput" placeholder="Choose destination folder (e.g., E:\CleanPhotos or OneDrive)" readonly />
+            <button id="btnBrowseDest" class="btn btn-secondary">Browse...</button>
+          </div>
+          <div class="field-row" style="margin-top: 10px;">
+            <label for="folderLayoutSelect">Destination Folder Structure</label>
+            <select id="folderLayoutSelect">
+              <option value="date_ym" selected>Organize cleanly by Year / Month (YYYY/MM)</option>
+              <option value="preserve">Keep original folder names</option>
+            </select>
+          </div>
+          <div class="btn-group" style="margin-top: 12px;">
+            <button id="btnCopyKept" class="btn btn-primary">
+              Copy Kept Files to Destination
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Optional Spot-Check Drawer (collapsed by default — zero manual effort required) -->
+      <details id="sampleDrawer" class="sample-drawer">
+        <summary>Optional: Spot-check sample flagged files (not required)</summary>
+        <div class="sample-tabs">
+          <button class="tab-btn active" data-cat="exact_duplicate">Exact Duplicates</button>
+          <button class="tab-btn" data-cat="blurry">Blurry Portraits</button>
+          <button class="tab-btn" data-cat="similar_loser">Similar Bursts</button>
+        </div>
+        <div id="sampleGrid" class="sample-grid"></div>
+      </details>
+
+      <!-- Prominent Bottom Footer CTA -->
+      <div class="report-footer-cta">
+        <button id="btnNewAnalysis" class="btn btn-success btn-lg">Start New Scan</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Folder Browser Modal -->
+  <div id="browserModal" class="modal hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="browserModalTitle">Select Folder or Drive</h3>
+        <button id="btnCloseBrowser" class="btn-icon">&times;</button>
+      </div>
+      <div class="browser-toolbar">
+        <button id="btnBrowseUp" class="btn btn-secondary btn-sm">Up</button>
+        <input type="text" id="browserPathInput" placeholder="Enter or navigate to a path..." />
+        <button id="btnBrowseGo" class="btn btn-secondary btn-sm">Go</button>
+      </div>
+      <div id="browserList" class="browser-list"></div>
+      <div class="modal-footer">
+        <span id="browserHint" class="hint"></span>
+        <div>
+          <button id="btnCancelBrowser" class="btn btn-secondary">Cancel</button>
+          <button id="btnConfirmBrowser" class="btn btn-primary">Select This Folder</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Permanent Delete Confirmation Modal -->
+  <div id="deleteModal" class="modal hidden">
+    <div class="modal-dialog modal-sm">
+      <div class="modal-header">
+        <h3>Confirm Permanent Deletion</h3>
+        <button id="btnCloseDeleteModal" class="btn-icon">&times;</button>
+      </div>
+      <p id="deleteModalText" style="margin: 12px 0; line-height: 1.5;"></p>
+      <label class="check-row" style="margin: 8px 0 4px;">
+        <input type="checkbox" id="deleteConfirmCheck" />
+        <span>I understand these files will be permanently deleted</span>
+      </label>
+      <div class="modal-footer">
+        <button id="btnCancelDelete" class="btn btn-secondary">Cancel</button>
+        <button id="btnConfirmDelete" class="btn btn-danger" disabled>Delete Permanently</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
